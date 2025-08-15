@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Top 50 Altcoins - 1 Year Analysis</title>
+  <style>
+    body { font-family: Arial; padding: 20px; background: #f0f2f5; }
+    h1 { text-align: center; }
+    table { border-collapse: collapse; width: 100%; background: #fff; font-size: 12px;}
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+    th { background-color: #4CAF50; color: white; }
+    tr:nth-child(even) { background-color: #f9f9f9; }
+    .loading { text-align: center; font-size: 16px; margin: 20px; }
+    a { color: #007BFF; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h1>Top 50 Altcoins (1 Year Daily Analysis)</h1>
+  <div class="loading" id="loading">Loading data, please wait... This may take a few minutes.</div>
+  <table id="cryptoTable" style="display:none;">
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Name</th>
+        <th>Symbol</th>
+        <th>Market Cap</th>
+        <th>Sector</th>
+        <th>Main Links / Company</th>
+        <th>Worst 1-Day Drop (%)</th>
+        <th>Worst Consecutive Drop (%)</th>
+        <th>Dates of Big Falls</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+async function fetchTopCoins() {
+    const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=50&page=1');
+    const coins = await res.json();
+    return coins;
+}
+
+async function fetchDailyPrices(coinId) {
+    const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=365&interval=daily`);
+    const data = await res.json();
+    return data.prices;
+}
+
+async function fetchCoinInfo(coinId) {
+    const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}`);
+    const data = await res.json();
+    return {
+        category: data.categories?.join(", ") || "N/A",
+        links: data.links?.homepage?.filter(url => url) || []
+    };
+}
+
+function analyzeDrops(prices) {
+    const drops = [];
+    let worstDay = 0;
+    let worstConsec = 0;
+    let streak = [];
+    let inStreak = false;
+    for (let i = 1; i < prices.length; i++) {
+        const prev = prices[i-1][1];
+        const curr = prices[i][1];
+        const pct = ((curr - prev) / prev) * 100;
+        drops.push({date: new Date(prices[i][0]).toLocaleDateString(), pct: pct});
+        if (pct < worstDay) worstDay = pct;
+
+        if (pct < 0) {
+            streak.push({date: new Date(prices[i][0]).toLocaleDateString(), pct: pct});
+            inStreak = true;
+        } else {
+            if (inStreak) {
+                const total = streak.reduce((acc, x) => acc*(1 + x.pct/100), 1);
+                const totalPct = (total-1)*100;
+                if (totalPct < worstConsec) worstConsec = totalPct;
+                streak = [];
+                inStreak = false;
+            }
+        }
+    }
+    // check last streak
+    if (streak.length>0){
+        const total = streak.reduce((acc, x) => acc*(1 + x.pct/100), 1);
+        const totalPct = (total-1)*100;
+        if (totalPct < worstConsec) worstConsec = totalPct;
+    }
+
+    // dates when big falls (> -10%)
+    const bigFallDates = drops.filter(d=>d.pct<=-10).map(d=>d.date).join(", ");
+
+    return {worstDay: worstDay.toFixed(2), worstConsec: worstConsec.toFixed(2), bigFallDates};
+}
+
+async function loadCoins() {
+    const coins = await fetchTopCoins();
+    const tableBody = document.querySelector("#cryptoTable tbody");
+    let rank = 1;
+    for (const coin of coins) {
+        try {
+            const prices = await fetchDailyPrices(coin.id);
+            const analysis = analyzeDrops(prices);
+
+            // filter: worst 1-day drop > -10% or worst consecutive drop > -40%
+            if (analysis.worstDay <= -10 || analysis.worstConsec <= -40) continue;
+
+            const info = await fetchCoinInfo(coin.id);
+            const linksHTML = info.links.map(url => `<a href="${url}" target="_blank">${url}</a>`).join("<br>") || "N/A";
+
+            const row = `<tr>
+                <td>${rank}</td>
+                <td>${coin.name}</td>
+                <td>${coin.symbol.toUpperCase()}</td>
+                <td>$${coin.market_cap.toLocaleString()}</td>
+                <td>${info.category}</td>
+                <td>${linksHTML}</td>
+                <td>${analysis.worstDay}</td>
+                <td>${analysis.worstConsec}</td>
+                <td>${analysis.bigFallDates}</td>
+            </tr>`;
+            tableBody.innerHTML += row;
+            rank++;
+        } catch(e) {
+            console.error("Error fetching coin", coin.id, e);
+        }
+    }
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("cryptoTable").style.display = "table";
+}
+
+loadCoins();
+</script>
+</body>
+</html>
